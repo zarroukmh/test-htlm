@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>D3 Tree with Expand/Collapse</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+    }
+
+    svg {
+      width: 100vw;
+      height: 100vh;
+      background-color: #f9f9f9;
+    }
+
+    .node circle {
+      fill: #fff;
+      stroke: steelblue;
+      stroke-width: 2px;
+    }
+
+    .node text {
+      font: 12px sans-serif;
+      text-anchor: middle;
+      dominant-baseline: hanging;
+      user-select: none;
+    }
+
+    .link {
+      fill: none;
+      stroke: #ccc;
+      stroke-width: 2px;
+    }
+
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(0, 0, 0, 0.75);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 5px;
+      font-size: 13px;
+      max-width: 300px;
+      white-space: normal;
+      line-height: 1.3;
+      visibility: hidden;
+      z-index: 10;
+    }
+
+    .controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+    }
+
+    .controls button {
+      margin-right: 10px;
+      padding: 8px 12px;
+      font-size: 14px;
+      background-color: steelblue;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    .controls button:hover {
+      background-color: #4682b4;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Buttons -->
+<div class="controls">
+  <button onclick="expandAllTree()">Tout développer</button>
+  <button onclick="collapseAllTree()">Tout réduire</button>
+</div>
+
+<!-- Tooltip -->
+<div id="tooltip" class="tooltip"></div>
+
+<svg></svg>
+
+<script>
+  const svg = d3.select("svg"),
+        width = window.innerWidth,
+        height = window.innerHeight;
+
+  const g = svg.append("g");
+  const tooltip = d3.select("#tooltip");
+
+  const zoom = d3.zoom().on("zoom", (event) => {
+    g.attr("transform", event.transform);
+  });
+  svg.call(zoom);
+
+  function removeCycles(node, seen = new Set()) {
+    if (seen.has(node)) return null;
+    seen.add(node);
+    if (node.children) {
+      node.children = node.children.map(child => removeCycles(child, seen)).filter(Boolean);
+    }
+    return node;
+  }
+
+  let root; // make root accessible globally
+  let i = 0;
+  const treeLayout = d3.tree().nodeSize([40, 100]);
+
+  d3.json("tree3.json").then(rawData => {
+    const data = removeCycles(rawData);
+    root = d3.hierarchy(data);
+    root.x0 = height / 2;
+    root.y0 = 0;
+    update(root);
+  });
+
+  function update(source) {
+    const treeData = treeLayout(root);
+    const nodes = treeData.descendants();
+    const links = treeData.links();
+
+    const node = g.selectAll(".node")
+      .data(nodes, d => d.id || (d.id = ++i));
+
+    const nodeEnter = node.enter().append("g")
+      .attr("class", "node")
+      .attr("transform", d => `translate(${source.x0},${source.y0})`)
+      .on("click", (event, d) => {
+        if (d.children) {
+          d._children = d.children;
+          d.children = null;
+        } else if (d._children) {
+          d.children = d._children;
+          d._children = null;
+        }
+        update(d);
+      })
+      .on("mousemove", (event, d) => {
+        tooltip.style("visibility", "visible")
+          .style("top", (event.pageY + 15) + "px")
+          .style("left", (event.pageX + 15) + "px")
+          .text(d.data.summary || "No summary available");
+      })
+      .on("mouseout", () => {
+        tooltip.style("visibility", "hidden");
+      });
+
+    nodeEnter.append("circle")
+      .attr("r", 10)
+      .style("fill", d => d._children ? "lightsteelblue" : "#fff");
+
+    nodeEnter.append("text")
+      .attr("dy", 12)
+      .text(d => d.data.name || d.data.summary || "");
+
+    const nodeUpdate = nodeEnter.merge(node);
+
+    nodeUpdate.transition()
+      .duration(500)
+      .attr("transform", d => `translate(${d.x},${d.y})`);
+
+    nodeUpdate.select("circle")
+      .style("fill", d => d._children ? "lightsteelblue" : "#fff");
+
+    node.exit().transition()
+      .duration(500)
+      .attr("transform", d => `translate(${source.x},${source.y})`)
+      .remove()
+      .selectAll("circle, text").style("fill-opacity", 0);
+
+    const link = g.selectAll(".link")
+      .data(links, d => d.target.id);
+
+    const linkEnter = link.enter().insert("path", "g")
+      .attr("class", "link")
+      .attr("d", d => {
+        const o = { x: source.x0, y: source.y0 };
+        return d3.linkVertical().x(d => d.x).y(d => d.y)({ source: o, target: o });
+      });
+
+    linkEnter.merge(link).transition()
+      .duration(500)
+      .attr("d", d3.linkVertical().x(d => d.x).y(d => d.y));
+
+    link.exit().transition()
+      .duration(500)
+      .attr("d", d => {
+        const o = { x: source.x, y: source.y };
+        return d3.linkVertical().x(d => d.x).y(d => d.y)({ source: o, target: o });
+      }).remove();
+
+    nodes.forEach(d => {
+      d.x0 = d.x;
+      d.y0 = d.y;
+    });
+  }
+
+  function collapseAll(d) {
+    if (d.children) {
+      d.children.forEach(collapseAll);
+      d._children = d.children;
+      d.children = null;
+    }
+  }
+
+  function expandAll(d) {
+    if (d._children) {
+      d.children = d._children;
+      d._children = null;
+    }
+    if (d.children) {
+      d.children.forEach(expandAll);
+    }
+  }
+
+  window.collapseAllTree = function () {
+    if (root) {
+      collapseAll(root);
+      update(root);
+    }
+  };
+
+  window.expandAllTree = function () {
+    if (root) {
+      expandAll(root);
+      update(root);
+    }
+  };
+</script>
+
+</body>
+</html>
